@@ -14,6 +14,11 @@ Create AI-powered tools to automate complex 3D modelling and design workflows.
 
 ## Twisted tower generator (Rhino 8)
 
+For natural-language control without transferring scripts, see the
+[Rhino MCP connection findings and local-client setup](docs/rhino-mcp-connection.md).
+No working Codex Web connection has been verified; the documented McNeel Codex
+route uses a local client on the Rhino computer.
+
 Run [`scripts/twisted_tower.py`](scripts/twisted_tower.py) in Rhino 8's built-in
 Python 3 editor. No external Python packages or API keys are required.
 

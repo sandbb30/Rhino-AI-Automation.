@@ -1,0 +1,9 @@
+# EXAMPLE ONLY: for a LOCAL Codex client on the Windows Rhino computer.
+# This file does not configure chatgpt.com/codex and is not automatically loaded.
+# Prefer the existing MCPConnect-generated entry in %USERPROFILE%\.codex\config.toml.
+# If absent, merge this table into that file; preserve all existing settings.
+# Replace the entire command value with the exact router path from MCPConnect.
+# TOML single quotes preserve Windows backslashes literally.
+[mcp_servers.rhino]
+command = 'C:\REPLACE_WITH_MCPConnect_ROUTER_PATH\rhino-mcp-router.exe'
+args = ["--default-version", "8"]
