@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Title>Rhino AI Studio Dock</Title>
+    <Description>Native dockable Rhino 8 panel for Rhino AI Studio</Description>
+    <Company>Sandy</Company>
+    <Version>0.1.0</Version>
+    <AssemblyName>RhinoAIStudioDock</AssemblyName>
+    <RootNamespace>RhinoAIStudioDock</RootNamespace>
+    <TargetExt>.rhp</TargetExt>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RhinoCommon" Version="8.21.25188.17001" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>
