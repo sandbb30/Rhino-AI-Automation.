@@ -26,10 +26,16 @@ namespace RhinoAIStudioDock
         private bool _mcpStarted;
         private string _provider = "copilot";
 
+        private const int MaxAttachments = 4;
+        private const long MaxAttachmentBytes = 12L * 1024L * 1024L;
+
         public RhinoAIStudioPanel()
         {
-            _messages.Add(("assistant", "Rhino AI Studio",
-                "Ready. Ask me to create, modify or analyse something in Rhino."));
+            _messages.Add((
+                "assistant",
+                "Rhino AI Studio",
+                "Ready. Choose an AI, attach a reference image if needed, then tell me what to create or modify."
+            ));
 
             _web.DocumentLoading += OnDocumentLoading;
             Content = _web;
@@ -70,6 +76,18 @@ namespace RhinoAIStudioDock
                 else if (action == "attach")
                 {
                     AttachImages();
+                    Render();
+                }
+                else if (action == "removeattachment")
+                {
+                    if (query.TryGetValue("index", out var raw) &&
+                        int.TryParse(raw, out int index) &&
+                        index >= 0 &&
+                        index < _attachments.Count)
+                    {
+                        _attachments.RemoveAt(index);
+                    }
+
                     Render();
                 }
                 else if (action == "clearattachments")
@@ -144,10 +162,20 @@ namespace RhinoAIStudioDock
         {
             try
             {
-                var dialog = new OpenFileDialog
+                if (_attachments.Count >= MaxAttachments)
+                {
+                    _messages.Add((
+                        "assistant",
+                        "Rhino AI Studio",
+                        $"You can attach up to {MaxAttachments} images per message."
+                    ));
+                    return;
+                }
+
+                var dialog = new Eto.Forms.OpenFileDialog
                 {
                     MultiSelect = true,
-                    Title = "Attach image"
+                    Title = "Attach reference image"
                 };
 
                 dialog.Filters.Add(new FileFilter(
@@ -166,8 +194,25 @@ namespace RhinoAIStudioDock
 
                 foreach (string file in dialog.Filenames)
                 {
-                    if (File.Exists(file) && !_attachments.Contains(file))
-                        _attachments.Add(file);
+                    if (_attachments.Count >= MaxAttachments)
+                        break;
+
+                    if (!File.Exists(file) || _attachments.Contains(file))
+                        continue;
+
+                    var info = new FileInfo(file);
+
+                    if (info.Length > MaxAttachmentBytes)
+                    {
+                        _messages.Add((
+                            "assistant",
+                            "Rhino AI Studio",
+                            $"{Path.GetFileName(file)} is too large. Keep each image under 12 MB."
+                        ));
+                        continue;
+                    }
+
+                    _attachments.Add(file);
                 }
             }
             catch (Exception ex)
@@ -183,11 +228,11 @@ namespace RhinoAIStudioDock
             var attachmentsForTurn = _attachments.ToList();
             _attachments.Clear();
 
-            string contextText = attachmentsForTurn.Count > 0
-                ? $"\n\nAttached image(s): {attachmentsForTurn.Count}"
+            string attachmentNote = attachmentsForTurn.Count > 0
+                ? $"\n\n[{attachmentsForTurn.Count} reference image(s) attached]"
                 : "";
 
-            _messages.Add(("user", "You", message + contextText));
+            _messages.Add(("user", "You", message + attachmentNote));
             Render();
 
             if (!_mcpStarted)
@@ -216,7 +261,12 @@ namespace RhinoAIStudioDock
             {
                 Eto.Forms.Application.Instance.AsyncInvoke(() =>
                 {
-                    _messages.Add(("assistant", "Rhino AI Studio", "AI error: " + ex.Message));
+                    _messages.Add((
+                        "assistant",
+                        ProviderDisplayName(providerForTurn),
+                        "AI error: " + ex.Message
+                    ));
+
                     _busy = false;
                     Render();
                 });
@@ -234,7 +284,7 @@ namespace RhinoAIStudioDock
             if (provider == "claude")
                 return RunClaude(userMessage, attachments);
 
-            throw new Exception("Unknown provider.");
+            throw new Exception("Unknown AI provider.");
         }
 
         private string BuildPrompt(string userMessage, List<string> attachments)
@@ -246,27 +296,25 @@ namespace RhinoAIStudioDock
             sb.AppendLine("Rhino is already running and an active document is open.");
             sb.AppendLine("You have access to an MCP server named rhino.");
             sb.AppendLine();
-            sb.AppendLine("When the user asks you to create, modify, delete, move, transform,");
-            sb.AppendLine("inspect, select, organize, model, create layers, use Grasshopper,");
-            sb.AppendLine("capture views, analyse geometry, or otherwise work with Rhino:");
+            sb.AppendLine("For modelling, editing, inspection, layers, transforms, Grasshopper,");
+            sb.AppendLine("view capture, geometry analysis, selections, or other Rhino operations:");
             sb.AppendLine();
             sb.AppendLine("USE THE RHINO MCP TOOLS DIRECTLY.");
             sb.AppendLine();
             sb.AppendLine("Do not launch another Rhino application.");
             sb.AppendLine("Work in the CURRENT ACTIVE RHINO DOCUMENT.");
-            sb.AppendLine("Do not tell the user to manually perform modelling operations");
-            sb.AppendLine("when Rhino MCP can perform them.");
-            sb.AppendLine("After finishing, briefly explain what was created or modified.");
+            sb.AppendLine("Do not tell the user to manually model something when Rhino MCP can do it.");
+            sb.AppendLine("Preserve existing geometry unless the user asks to change it.");
+            sb.AppendLine("If a reference image is attached, inspect it and use it as visual guidance.");
+            sb.AppendLine("After finishing, briefly explain what you created or changed.");
 
             if (attachments.Count > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("IMAGE REFERENCES:");
+                sb.AppendLine("REFERENCE IMAGE FILES:");
 
                 foreach (string image in attachments)
                     sb.AppendLine("- " + image);
-
-                sb.AppendLine("Inspect these image references and use them for the request.");
             }
 
             sb.AppendLine();
@@ -315,7 +363,9 @@ namespace RhinoAIStudioDock
             }
 
             if (result.exitCode != 0)
-                throw new Exception(string.IsNullOrWhiteSpace(result.error) ? result.output : result.error);
+                throw new Exception(
+                    string.IsNullOrWhiteSpace(result.error) ? result.output : result.error
+                );
 
             return (result.output ?? "").Trim();
         }
@@ -326,7 +376,8 @@ namespace RhinoAIStudioDock
 
             if (string.IsNullOrWhiteSpace(codex))
                 throw new Exception(
-                    "ChatGPT/Codex CLI not found. Install Codex CLI and sign in with your ChatGPT account first.");
+                    "ChatGPT is not configured in the dock yet. Install Codex CLI and sign in with your ChatGPT account."
+                );
 
             string router = FindRhinoMcpRouter();
 
@@ -361,7 +412,9 @@ namespace RhinoAIStudioDock
             var result = RunProcess(codex, args);
 
             if (result.exitCode != 0)
-                throw new Exception(string.IsNullOrWhiteSpace(result.error) ? result.output : result.error);
+                throw new Exception(
+                    string.IsNullOrWhiteSpace(result.error) ? result.output : result.error
+                );
 
             try
             {
@@ -409,7 +462,7 @@ namespace RhinoAIStudioDock
             });
 
             if (add.exitCode != 0)
-                throw new Exception("Could not configure Rhino MCP in Codex.");
+                throw new Exception("Could not configure Rhino MCP for ChatGPT.");
         }
 
         private string RunClaude(string userMessage, List<string> attachments)
@@ -418,7 +471,8 @@ namespace RhinoAIStudioDock
 
             if (string.IsNullOrWhiteSpace(claude))
                 throw new Exception(
-                    "Claude Code CLI not found. Install Claude Code CLI and sign in first.");
+                    "Claude is not configured in the dock yet. Install Claude Code and sign in first."
+                );
 
             string router = FindRhinoMcpRouter();
 
@@ -475,7 +529,9 @@ namespace RhinoAIStudioDock
                 var result = RunProcess(claude, args);
 
                 if (result.exitCode != 0)
-                    throw new Exception(string.IsNullOrWhiteSpace(result.error) ? result.output : result.error);
+                    throw new Exception(
+                        string.IsNullOrWhiteSpace(result.error) ? result.output : result.error
+                    );
 
                 return (result.output ?? "").Trim();
             }
@@ -539,7 +595,14 @@ namespace RhinoAIStudioDock
                 Path.Combine(appData, "npm", baseName + ".cmd"),
                 Path.Combine(local, "Microsoft", "WinGet", "Links", baseName + ".exe"),
                 Path.Combine(home, ".local", "bin", baseName + ".exe"),
-                Path.Combine(local, "Programs", "Microsoft VS Code", "bin", "copilot-shim", "copilot.exe")
+                Path.Combine(
+                    local,
+                    "Programs",
+                    "Microsoft VS Code",
+                    "bin",
+                    "copilot-shim",
+                    "copilot.exe"
+                )
             };
 
             return candidates.FirstOrDefault(File.Exists);
@@ -594,12 +657,26 @@ namespace RhinoAIStudioDock
                 return "GitHub Copilot";
 
             if (provider == "codex")
-                return "ChatGPT / Codex";
+                return "ChatGPT";
 
             if (provider == "claude")
                 return "Claude";
 
             return "AI";
+        }
+
+        private bool IsProviderReady(string provider)
+        {
+            if (provider == "copilot")
+                return !string.IsNullOrWhiteSpace(FindExecutable("copilot"));
+
+            if (provider == "codex")
+                return !string.IsNullOrWhiteSpace(FindExecutable("codex"));
+
+            if (provider == "claude")
+                return !string.IsNullOrWhiteSpace(FindExecutable("claude"));
+
+            return false;
         }
 
         private string BuildMessagesHtml()
@@ -622,18 +699,84 @@ namespace RhinoAIStudioDock
             if (_attachments.Count == 0)
                 return "";
 
-            string chips = string.Join("", _attachments.Select(path =>
-                "<span class='chip'>📎 " + Escape(Path.GetFileName(path)) + "</span>"));
+            var cards = new StringBuilder();
+
+            for (int i = 0; i < _attachments.Count; i++)
+            {
+                string path = _attachments[i];
+                string fileName = Path.GetFileName(path);
+                string imageSrc = BuildDataUri(path);
+
+                cards.Append("<div class='attachcard'>");
+
+                if (!string.IsNullOrWhiteSpace(imageSrc))
+                {
+                    cards.Append(
+                        "<img class='thumb' src='" + imageSrc + "' alt='reference image'>"
+                    );
+                }
+                else
+                {
+                    cards.Append("<div class='thumb fallback'>IMG</div>");
+                }
+
+                cards.Append("<div class='attachname'>" + Escape(fileName) + "</div>");
+                cards.Append(
+                    "<button class='remove' onclick='removeAttachment(" + i + ")'>×</button>"
+                );
+                cards.Append("</div>");
+            }
 
             return
-                "<div class='attachmentbar'>" +
-                chips +
-                "<button class='clearattach' onclick='clearAttachments()'>Clear</button>" +
+                "<div class='attachments'>" +
+                "<div class='attachhead'><span>Reference images</span>" +
+                "<button class='clearattach' onclick='clearAttachments()'>Clear all</button></div>" +
+                "<div class='attachlist'>" + cards + "</div>" +
                 "</div>";
+        }
+
+        private static string BuildDataUri(string path)
+        {
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(path);
+                string ext = Path.GetExtension(path).ToLowerInvariant();
+
+                string mime = ext switch
+                {
+                    ".jpg" => "image/jpeg",
+                    ".jpeg" => "image/jpeg",
+                    ".png" => "image/png",
+                    ".webp" => "image/webp",
+                    ".gif" => "image/gif",
+                    _ => null
+                };
+
+                if (mime == null)
+                    return "";
+
+                return "data:" + mime + ";base64," + Convert.ToBase64String(bytes);
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private void Render()
         {
+            string documentName = RhinoDoc.ActiveDoc?.Name;
+
+            if (string.IsNullOrWhiteSpace(documentName))
+                documentName = "Untitled";
+
+            bool providerReady = IsProviderReady(_provider);
+
+            string providerStateClass = providerReady ? "ready" : "setup";
+            string providerStateText = providerReady
+                ? ProviderDisplayName(_provider) + " ready"
+                : ProviderDisplayName(_provider) + " setup needed";
+
             string html = """
 <!doctype html>
 <html>
@@ -641,46 +784,62 @@ namespace RhinoAIStudioDock
 <meta charset='utf-8'>
 <style>
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;font-family:Segoe UI,Arial;background:#fff;color:#202124}
+html,body{height:100%;margin:0;font-family:Segoe UI,Arial,sans-serif;background:#fbfbfc;color:#202124}
+button,select,textarea{font-family:inherit}
 .app{height:100%;display:flex;flex-direction:column}
-.top{padding:12px;border-bottom:1px solid #e5e5e5}
-.brand{font-size:15px;font-weight:650}
-.sub{font-size:10px;color:#777;margin-top:2px}
-.providerrow{display:flex;gap:6px;margin-top:10px}
-select{flex:1;height:32px;border:1px solid #ddd;border-radius:7px;background:#fff;padding:0 7px;font-size:10px}
-.status{margin-top:8px;display:flex;gap:6px;align-items:center}
-.pill{font-size:9px;padding:5px 8px;border-radius:12px}
-.on{background:#e5f7e9;color:#16823a}
-.off{background:#eee;color:#666}
-.small{border:0;background:#f3f3f4;border-radius:7px;padding:6px 8px;font-size:9px;cursor:pointer}
-.chat{flex:1;overflow:auto;padding:12px}
+.top{padding:13px 12px 11px;border-bottom:1px solid #e8e8eb;background:#fff}
+.brandrow{display:flex;align-items:center;gap:8px}
+.logo{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#6c50e8,#9679ff);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700}
+.brand{font-size:14px;font-weight:700}
+.model{font-size:9px;color:#777;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.providerrow{display:flex;gap:7px;margin-top:11px}
+select{flex:1;height:34px;border:1px solid #dddde3;border-radius:8px;background:#fff;padding:0 9px;font-size:10px;outline:none}
+.small{border:1px solid #e4e4e8;background:#f6f6f8;border-radius:8px;padding:7px 9px;font-size:9px;cursor:pointer}
+.status{margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pill{font-size:9px;padding:5px 8px;border-radius:14px}
+.on,.ready{background:#e8f7ec;color:#19763a}
+.off{background:#f1f1f3;color:#666}
+.setup{background:#fff2dc;color:#8b5b00}
+.chat{flex:1;overflow:auto;padding:13px 11px}
 .row{display:flex;margin-bottom:12px}
 .row.user{justify-content:flex-end}
-.bubble{max-width:88%;padding:9px 10px;border-radius:10px;background:#f2f3f5;font-size:11px;line-height:1.45}
-.user .bubble{background:#eeeaff}
-.name{font-size:9px;color:#777;font-weight:600;margin-bottom:4px}
-.attachmentbar{padding:5px 10px;display:flex;gap:5px;align-items:center;overflow-x:auto;border-top:1px solid #eee}
-.chip{flex:0 0 auto;background:#f1f2f4;border-radius:6px;padding:5px 7px;font-size:9px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.clearattach{border:0;background:transparent;color:#777;font-size:9px;cursor:pointer}
-.composer{padding:10px;border-top:1px solid #e7e7e7}
-.box{border:1px solid #7055e8;border-radius:10px;padding:7px}
-textarea{width:100%;height:72px;resize:none;border:0;outline:none;font:11px Segoe UI;background:transparent}
+.bubble{max-width:90%;padding:9px 10px;border-radius:11px;background:#f0f1f3;font-size:11px;line-height:1.5;word-break:break-word}
+.user .bubble{background:#eeeaff;border:1px solid #e2dbff}
+.name{font-size:9px;color:#777;font-weight:650;margin-bottom:4px}
+.attachments{border-top:1px solid #ececf0;background:#fff;padding:8px 10px 7px}
+.attachhead{display:flex;align-items:center;justify-content:space-between;font-size:9px;color:#666;margin-bottom:6px}
+.clearattach{border:0;background:transparent;color:#6c50e8;font-size:9px;cursor:pointer}
+.attachlist{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px}
+.attachcard{position:relative;flex:0 0 82px;border:1px solid #e3e3e8;border-radius:8px;background:#fafafa;padding:4px}
+.thumb{width:72px;height:52px;object-fit:cover;border-radius:5px;display:block;background:#eee}
+.fallback{display:flex;align-items:center;justify-content:center;font-size:9px;color:#777}
+.attachname{font-size:8px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.remove{position:absolute;top:1px;right:1px;width:18px;height:18px;border:0;border-radius:9px;background:rgba(30,30,30,.72);color:#fff;font-size:13px;line-height:16px;cursor:pointer}
+.composer{padding:10px;border-top:1px solid #e7e7ea;background:#fff}
+.box{border:1px solid #7257e8;border-radius:11px;padding:7px;background:#fff;box-shadow:0 0 0 2px rgba(114,87,232,.06)}
+textarea{width:100%;height:72px;resize:none;border:0;outline:none;font-size:11px;line-height:1.45;background:transparent;color:#222}
 .bottom{display:flex;align-items:center;gap:6px;margin-top:5px}
-.attach{border:0;background:#f2f3f5;border-radius:7px;padding:7px 9px;font-size:10px;cursor:pointer}
-.send{margin-left:auto;border:0;background:#6246df;color:white;border-radius:7px;padding:7px 14px;font-size:10px;font-weight:600;cursor:pointer}
-.send:disabled{opacity:.55}
+.hint{font-size:8px;color:#999}
+.attach{border:0;background:#f1effc;color:#5d43cf;border-radius:7px;padding:7px 9px;font-size:10px;font-weight:600;cursor:pointer}
+.send{margin-left:auto;border:0;background:#6549df;color:#fff;border-radius:8px;padding:7px 14px;font-size:10px;font-weight:650;cursor:pointer}
+.send:disabled{opacity:.5;cursor:default}
 </style>
 </head>
 <body>
 <div class='app'>
   <div class='top'>
-    <div class='brand'>Rhino AI Studio</div>
-    <div class='sub'>AI assistant for the active Rhino model</div>
+    <div class='brandrow'>
+      <div class='logo'>AI</div>
+      <div style='min-width:0'>
+        <div class='brand'>Rhino AI Studio</div>
+        <div class='model'>Active model: __DOCUMENT__</div>
+      </div>
+    </div>
 
     <div class='providerrow'>
       <select onchange='setProvider(this.value)'>
         <option value='copilot' __COPILOT_SELECTED__>GitHub Copilot</option>
-        <option value='codex' __CODEX_SELECTED__>ChatGPT / Codex</option>
+        <option value='codex' __CODEX_SELECTED__>ChatGPT</option>
         <option value='claude' __CLAUDE_SELECTED__>Claude</option>
       </select>
 
@@ -688,8 +847,9 @@ textarea{width:100%;height:72px;resize:none;border:0;outline:none;font:11px Sego
     </div>
 
     <div class='status'>
-      <span class='pill __STATUS_CLASS__'>__STATUS_TEXT__</span>
-      <button class='small' onclick='startMcp()'>Start MCP</button>
+      <span class='pill __MCP_CLASS__'>__MCP_TEXT__</span>
+      <span class='pill __PROVIDER_CLASS__'>__PROVIDER_TEXT__</span>
+      <button class='small' onclick='startMcp()'>Connect MCP</button>
     </div>
   </div>
 
@@ -699,9 +859,10 @@ textarea{width:100%;height:72px;resize:none;border:0;outline:none;font:11px Sego
 
   <div class='composer'>
     <div class='box'>
-      <textarea id='p' placeholder='Ask AI to create or modify something in Rhino...'></textarea>
+      <textarea id='p' placeholder='Describe what you want to create, modify or analyse...'></textarea>
       <div class='bottom'>
-        <button class='attach' onclick='attachImage()'>📎 Image</button>
+        <button class='attach' onclick='attachImage()'>＋ Image</button>
+        <span class='hint'>Enter to send · Shift+Enter for new line</span>
         <button class='send' __SEND_DISABLED__ onclick='sendMessage()'>__SEND_TEXT__</button>
       </div>
     </div>
@@ -712,6 +873,7 @@ textarea{width:100%;height:72px;resize:none;border:0;outline:none;font:11px Sego
 function nav(url){window.location.href=url;}
 function setProvider(v){nav('rhinoai://provider?value='+encodeURIComponent(v));}
 function attachImage(){nav('rhinoai://attach');}
+function removeAttachment(i){nav('rhinoai://removeattachment?index='+i);}
 function clearAttachments(){nav('rhinoai://clearattachments');}
 function newChat(){nav('rhinoai://clear');}
 function startMcp(){nav('rhinoai://mcp');}
@@ -722,7 +884,7 @@ function sendMessage(){
   nav('rhinoai://send?message='+encodeURIComponent(t));
 }
 document.addEventListener('keydown',function(e){
-  if(e.ctrlKey&&e.key==='Enter'){
+  if(e.target && e.target.id==='p' && e.key==='Enter' && !e.shiftKey){
     e.preventDefault();
     sendMessage();
   }
@@ -730,6 +892,8 @@ document.addEventListener('keydown',function(e){
 window.addEventListener('load',function(){
   var c=document.getElementById('chat');
   if(c)c.scrollTop=c.scrollHeight;
+  var p=document.getElementById('p');
+  if(p)p.focus();
 });
 </script>
 </body>
@@ -737,11 +901,14 @@ window.addEventListener('load',function(){
 """;
 
             html = html
+                .Replace("__DOCUMENT__", Escape(documentName))
                 .Replace("__COPILOT_SELECTED__", _provider == "copilot" ? "selected" : "")
                 .Replace("__CODEX_SELECTED__", _provider == "codex" ? "selected" : "")
                 .Replace("__CLAUDE_SELECTED__", _provider == "claude" ? "selected" : "")
-                .Replace("__STATUS_CLASS__", _mcpStarted ? "on" : "off")
-                .Replace("__STATUS_TEXT__", _mcpStarted ? "MCP connected" : "MCP available")
+                .Replace("__MCP_CLASS__", _mcpStarted ? "on" : "off")
+                .Replace("__MCP_TEXT__", _mcpStarted ? "Rhino MCP connected" : "Rhino MCP available")
+                .Replace("__PROVIDER_CLASS__", providerStateClass)
+                .Replace("__PROVIDER_TEXT__", Escape(providerStateText))
                 .Replace("__MESSAGES__", BuildMessagesHtml())
                 .Replace("__ATTACHMENTS__", BuildAttachmentHtml())
                 .Replace("__SEND_DISABLED__", _busy ? "disabled" : "")
