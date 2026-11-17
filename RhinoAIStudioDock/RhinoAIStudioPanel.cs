@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
 using Rhino.UI;
@@ -18,16 +19,28 @@ namespace RhinoAIStudioDock
         public static Guid PanelId => typeof(RhinoAIStudioPanel).GUID;
         public string Title { get; } = "Rhino AI Studio";
 
+        private sealed class ImageAttachment
+        {
+            public string OriginalPath { get; init; } = "";
+            public string SafePath { get; init; } = "";
+            public string PreviewPath { get; init; } = "";
+            public string DisplayName { get; init; } = "";
+        }
+
         private readonly WebView _web = new WebView();
         private readonly List<(string role, string name, string text)> _messages = new();
-        private readonly List<string> _attachments = new();
+        private readonly List<ImageAttachment> _attachments = new();
 
         private bool _busy;
         private bool _mcpStarted;
+        private bool _processingAttachments;
         private string _provider = "copilot";
 
         private const int MaxAttachments = 4;
         private const long MaxAttachmentBytes = 12L * 1024L * 1024L;
+        private const int MaxSafeImageDimension = 1600;
+        private const int PreviewMaxWidth = 240;
+        private const int PreviewMaxHeight = 180;
 
         public RhinoAIStudioPanel()
         {
@@ -76,7 +89,6 @@ namespace RhinoAIStudioDock
                 else if (action == "attach")
                 {
                     AttachImages();
-                    Render();
                 }
                 else if (action == "removeattachment")
                 {
@@ -85,13 +97,18 @@ namespace RhinoAIStudioDock
                         index >= 0 &&
                         index < _attachments.Count)
                     {
+                        var removed = _attachments[index];
                         _attachments.RemoveAt(index);
+                        CleanupAttachment(removed);
                     }
 
                     Render();
                 }
                 else if (action == "clearattachments")
                 {
+                    foreach (var attachment in _attachments)
+                        CleanupAttachment(attachment);
+
                     _attachments.Clear();
                     Render();
                 }
@@ -103,6 +120,10 @@ namespace RhinoAIStudioDock
                 else if (action == "clear")
                 {
                     _messages.Clear();
+
+                    foreach (var attachment in _attachments)
+                        CleanupAttachment(attachment);
+
                     _attachments.Clear();
                     _messages.Add(("assistant", "Rhino AI Studio", "New conversation started."));
                     Render();
@@ -162,6 +183,9 @@ namespace RhinoAIStudioDock
         {
             try
             {
+                if (_processingAttachments)
+                    return;
+
                 if (_attachments.Count >= MaxAttachments)
                 {
                     _messages.Add((
@@ -169,6 +193,7 @@ namespace RhinoAIStudioDock
                         "Rhino AI Studio",
                         $"You can attach up to {MaxAttachments} images per message."
                     ));
+                    Render();
                     return;
                 }
 
@@ -192,41 +217,232 @@ namespace RhinoAIStudioDock
                 if (result != DialogResult.Ok)
                     return;
 
-                foreach (string file in dialog.Filenames)
+                int availableSlots = MaxAttachments - _attachments.Count;
+
+                var selectedFiles = dialog.Filenames
+                    .Where(File.Exists)
+                    .Where(file => !_attachments.Any(a =>
+                        string.Equals(
+                            a.OriginalPath,
+                            file,
+                            StringComparison.OrdinalIgnoreCase)))
+                    .Take(availableSlots)
+                    .ToList();
+
+                if (selectedFiles.Count == 0)
+                    return;
+
+                _processingAttachments = true;
+                Render();
+
+                Task.Run(() =>
                 {
-                    if (_attachments.Count >= MaxAttachments)
-                        break;
+                    var processed = new List<ImageAttachment>();
+                    var errors = new List<string>();
 
-                    if (!File.Exists(file) || _attachments.Contains(file))
-                        continue;
-
-                    var info = new FileInfo(file);
-
-                    if (info.Length > MaxAttachmentBytes)
+                    foreach (string file in selectedFiles)
                     {
-                        _messages.Add((
-                            "assistant",
-                            "Rhino AI Studio",
-                            $"{Path.GetFileName(file)} is too large. Keep each image under 12 MB."
-                        ));
-                        continue;
+                        try
+                        {
+                            var info = new FileInfo(file);
+
+                            if (info.Length > MaxAttachmentBytes)
+                            {
+                                errors.Add(
+                                    $"{Path.GetFileName(file)} is too large. Keep each image under 12 MB."
+                                );
+                                continue;
+                            }
+
+                            processed.Add(ProcessImageAttachment(file));
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add(
+                                $"{Path.GetFileName(file)} could not be processed: {ex.Message}"
+                            );
+                        }
                     }
 
-                    _attachments.Add(file);
-                }
+                    return Tuple.Create(processed, errors);
+                })
+                .ContinueWith(task =>
+                {
+                    Eto.Forms.Application.Instance.AsyncInvoke(() =>
+                    {
+                        _processingAttachments = false;
+
+                        if (task.IsFaulted)
+                        {
+                            _messages.Add((
+                                "assistant",
+                                "Rhino AI Studio",
+                                "Attachment processing failed."
+                            ));
+                            Render();
+                            return;
+                        }
+
+                        foreach (var attachment in task.Result.Item1)
+                        {
+                            if (_attachments.Count >= MaxAttachments)
+                            {
+                                CleanupAttachment(attachment);
+                                break;
+                            }
+
+                            _attachments.Add(attachment);
+                        }
+
+                        foreach (string error in task.Result.Item2)
+                        {
+                            _messages.Add((
+                                "assistant",
+                                "Rhino AI Studio",
+                                error
+                            ));
+                        }
+
+                        Render();
+                    });
+                });
             }
             catch (Exception ex)
             {
+                _processingAttachments = false;
                 _messages.Add(("assistant", "Rhino AI Studio", "Attachment error: " + ex.Message));
+                Render();
+            }
+        }
+
+        private static ImageAttachment ProcessImageAttachment(string originalPath)
+        {
+            string tempFolder = Path.Combine(
+                Path.GetTempPath(),
+                "RhinoAIStudio",
+                "attachments"
+            );
+
+            Directory.CreateDirectory(tempFolder);
+
+            string token = Guid.NewGuid().ToString("N");
+            string safePath = Path.Combine(tempFolder, token + "_safe.png");
+            string previewPath = Path.Combine(tempFolder, token + "_preview.png");
+
+            using var source = new Bitmap(originalPath);
+
+            Size safeSize = FitSize(
+                source.Width,
+                source.Height,
+                MaxSafeImageDimension,
+                MaxSafeImageDimension
+            );
+
+            using (var safeBitmap = new Bitmap(
+                safeSize.Width,
+                safeSize.Height,
+                PixelFormat.Format32bppRgba))
+            {
+                using (var graphics = new Graphics(safeBitmap))
+                {
+                    graphics.Clear(Colors.White);
+                    graphics.DrawImage(
+                        source,
+                        new RectangleF(0, 0, safeSize.Width, safeSize.Height)
+                    );
+                }
+
+                safeBitmap.Save(safePath, ImageFormat.Png);
+
+                Size previewSize = FitSize(
+                    safeSize.Width,
+                    safeSize.Height,
+                    PreviewMaxWidth,
+                    PreviewMaxHeight
+                );
+
+                using var previewBitmap = new Bitmap(
+                    previewSize.Width,
+                    previewSize.Height,
+                    PixelFormat.Format32bppRgba
+                );
+
+                using (var graphics = new Graphics(previewBitmap))
+                {
+                    graphics.Clear(Colors.White);
+                    graphics.DrawImage(
+                        safeBitmap,
+                        new RectangleF(0, 0, previewSize.Width, previewSize.Height)
+                    );
+                }
+
+                previewBitmap.Save(previewPath, ImageFormat.Png);
+            }
+
+            return new ImageAttachment
+            {
+                OriginalPath = originalPath,
+                SafePath = safePath,
+                PreviewPath = previewPath,
+                DisplayName = Path.GetFileName(originalPath)
+            };
+        }
+
+        private static Size FitSize(
+            int width,
+            int height,
+            int maxWidth,
+            int maxHeight)
+        {
+            if (width <= 0 || height <= 0)
+                return new Size(1, 1);
+
+            double scale = Math.Min(
+                1.0,
+                Math.Min(
+                    (double)maxWidth / width,
+                    (double)maxHeight / height
+                )
+            );
+
+            int newWidth = Math.Max(1, (int)Math.Round(width * scale));
+            int newHeight = Math.Max(1, (int)Math.Round(height * scale));
+
+            return new Size(newWidth, newHeight);
+        }
+
+        private static void CleanupAttachment(ImageAttachment attachment)
+        {
+            if (attachment == null)
+                return;
+
+            foreach (string path in new[] { attachment.SafePath, attachment.PreviewPath })
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        File.Delete(path);
+                }
+                catch
+                {
+                }
             }
         }
 
         private async void SendMessage(string message)
         {
+            if (_processingAttachments)
+                return;
+
             _busy = true;
 
             var attachmentsForTurn = _attachments.ToList();
             _attachments.Clear();
+
+            var safePathsForTurn = attachmentsForTurn
+                .Select(a => a.SafePath)
+                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                .ToList();
 
             string attachmentNote = attachmentsForTurn.Count > 0
                 ? $"\n\n[{attachmentsForTurn.Count} reference image(s) attached]"
@@ -243,7 +459,7 @@ namespace RhinoAIStudioDock
             try
             {
                 string response = await Task.Run(() =>
-                    RunProvider(providerForTurn, message, attachmentsForTurn));
+                    RunProvider(providerForTurn, message, safePathsForTurn));
 
                 Eto.Forms.Application.Instance.AsyncInvoke(() =>
                 {
@@ -270,6 +486,11 @@ namespace RhinoAIStudioDock
                     _busy = false;
                     Render();
                 });
+            }
+            finally
+            {
+                foreach (var attachment in attachmentsForTurn)
+                    CleanupAttachment(attachment);
             }
         }
 
@@ -696,16 +917,15 @@ namespace RhinoAIStudioDock
 
         private string BuildAttachmentHtml()
         {
-            if (_attachments.Count == 0)
+            if (_attachments.Count == 0 && !_processingAttachments)
                 return "";
 
             var cards = new StringBuilder();
 
             for (int i = 0; i < _attachments.Count; i++)
             {
-                string path = _attachments[i];
-                string fileName = Path.GetFileName(path);
-                string imageSrc = BuildDataUri(path);
+                var attachment = _attachments[i];
+                string imageSrc = BuildDataUri(attachment.PreviewPath);
 
                 cards.Append("<div class='attachcard'>");
 
@@ -720,11 +940,19 @@ namespace RhinoAIStudioDock
                     cards.Append("<div class='thumb fallback'>IMG</div>");
                 }
 
-                cards.Append("<div class='attachname'>" + Escape(fileName) + "</div>");
+                cards.Append("<div class='attachname'>" + Escape(attachment.DisplayName) + "</div>");
                 cards.Append(
                     "<button class='remove' onclick='removeAttachment(" + i + ")'>×</button>"
                 );
                 cards.Append("</div>");
+            }
+
+            if (_processingAttachments)
+            {
+                cards.Append(
+                    "<div class='attachcard'><div class='thumb fallback'>...</div>" +
+                    "<div class='attachname'>Processing image...</div></div>"
+                );
             }
 
             return
@@ -739,23 +967,18 @@ namespace RhinoAIStudioDock
         {
             try
             {
-                byte[] bytes = File.ReadAllBytes(path);
-                string ext = Path.GetExtension(path).ToLowerInvariant();
-
-                string mime = ext switch
-                {
-                    ".jpg" => "image/jpeg",
-                    ".jpeg" => "image/jpeg",
-                    ".png" => "image/png",
-                    ".webp" => "image/webp",
-                    ".gif" => "image/gif",
-                    _ => null
-                };
-
-                if (mime == null)
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                     return "";
 
-                return "data:" + mime + ";base64," + Convert.ToBase64String(bytes);
+                var info = new FileInfo(path);
+
+                // Preview files are tiny. Never push a large image into the WebView.
+                if (info.Length > 512L * 1024L)
+                    return "";
+
+                byte[] bytes = File.ReadAllBytes(path);
+
+                return "data:image/png;base64," + Convert.ToBase64String(bytes);
             }
             catch
             {
@@ -911,8 +1134,11 @@ window.addEventListener('load',function(){
                 .Replace("__PROVIDER_TEXT__", Escape(providerStateText))
                 .Replace("__MESSAGES__", BuildMessagesHtml())
                 .Replace("__ATTACHMENTS__", BuildAttachmentHtml())
-                .Replace("__SEND_DISABLED__", _busy ? "disabled" : "")
-                .Replace("__SEND_TEXT__", _busy ? "Working..." : "Send");
+                .Replace("__SEND_DISABLED__", (_busy || _processingAttachments) ? "disabled" : "")
+                .Replace(
+                    "__SEND_TEXT__",
+                    _processingAttachments ? "Processing image..." : (_busy ? "Working..." : "Send")
+                );
 
             _web.LoadHtml(html);
         }
