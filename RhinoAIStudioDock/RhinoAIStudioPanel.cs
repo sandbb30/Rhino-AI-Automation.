@@ -36,6 +36,7 @@ namespace RhinoAIStudioDock
         private bool _processingAttachments;
         private string _provider = "copilot";
         private string _modelingMode = "pro";
+        private string _workingStage = "";
 
         private const int MaxAttachments = 4;
         private const long MaxAttachmentBytes = 12L * 1024L * 1024L;
@@ -465,6 +466,10 @@ namespace RhinoAIStudioDock
                 StartMcp(false);
 
             string providerForTurn = _provider;
+            _workingStage = _modelingMode == "pro" && providerForTurn == "copilot"
+                ? "Analysing..."
+                : "Working...";
+            Render();
 
             try
             {
@@ -480,6 +485,7 @@ namespace RhinoAIStudioDock
                     ));
 
                     _busy = false;
+                    _workingStage = "";
                     Render();
                 });
             }
@@ -494,6 +500,7 @@ namespace RhinoAIStudioDock
                     ));
 
                     _busy = false;
+                    _workingStage = "";
                     Render();
                 });
             }
@@ -507,7 +514,12 @@ namespace RhinoAIStudioDock
         private string RunProvider(string provider, string userMessage, List<string> attachments)
         {
             if (provider == "copilot")
+            {
+                if (_modelingMode == "pro")
+                    return RunCopilotPro(userMessage, attachments);
+
                 return RunCopilot(userMessage, attachments);
+            }
 
             if (provider == "codex")
                 return RunCodex(userMessage, attachments);
@@ -585,15 +597,272 @@ namespace RhinoAIStudioDock
             return sb.ToString();
         }
 
-        private string RunCopilot(string userMessage, List<string> attachments)
+        private void SetWorkingStage(string stage)
+        {
+            _workingStage = stage ?? "";
+
+            try
+            {
+                Eto.Forms.Application.Instance.AsyncInvoke(() =>
+                {
+                    if (_busy)
+                        Render();
+                });
+            }
+            catch
+            {
+            }
+        }
+
+        private string BuildProAnalysisPrompt(string userMessage, List<string> attachments)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("You are the ANALYSIS PLANNER for Rhino AI Studio.");
+            sb.AppendLine("This is PASS 1 of 4: ANALYSE ONLY.");
+            sb.AppendLine();
+            sb.AppendLine("Do NOT create, delete, move, transform, trim, join or modify Rhino geometry in this pass.");
+            sb.AppendLine("Your only job is to produce a precise modelling plan for the next pass.");
+            sb.AppendLine();
+            sb.AppendLine("Analyse the user's request and any attached reference image(s).");
+            sb.AppendLine("If useful, you may inspect the CURRENT Rhino document using read-only Rhino MCP inspection tools, but do not modify it.");
+            sb.AppendLine();
+            sb.AppendLine("Return a structured plan containing:");
+            sb.AppendLine("- overall form and architectural intent");
+            sb.AppendLine("- inferred coordinate system/origin and principal axes");
+            sb.AppendLine("- key levels, proportions and dimensions, clearly marking inferred values");
+            sb.AppendLine("- component hierarchy: massing, slabs, walls, columns/supports, roof/canopy, openings, frames, facade elements and secondary details");
+            sb.AppendLine("- recommended Rhino construction method for each component");
+            sb.AppendLine("- where components must physically meet, intersect, trim, join or boolean");
+            sb.AppendLine("- repeated elements/patterns that should be generated consistently");
+            sb.AppendLine("- likely geometry risks: gaps, overlaps, slivers, floating pieces, invalid solids or poor joins");
+            sb.AppendLine("- an ordered modelling sequence");
+            sb.AppendLine();
+            sb.AppendLine("Be concrete and implementation-focused. Do not give generic design advice.");
+
+            if (attachments.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("REFERENCE IMAGE FILES:");
+                foreach (string image in attachments)
+                    sb.AppendLine("- " + image);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("USER REQUEST:");
+            sb.AppendLine(userMessage);
+
+            return sb.ToString();
+        }
+
+        private string BuildProBuildPrompt(
+            string userMessage,
+            List<string> attachments,
+            string plan)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("You are the BUILD MODELLER for Rhino AI Studio.");
+            sb.AppendLine("This is PASS 2 of 4: BUILD.");
+            sb.AppendLine();
+            sb.AppendLine("USE RHINO MCP TOOLS DIRECTLY and work in the CURRENT ACTIVE RHINO DOCUMENT.");
+            sb.AppendLine("Do not launch another Rhino instance.");
+            sb.AppendLine();
+            sb.AppendLine("Execute the modelling plan below. Do not merely describe what should be modelled.");
+            sb.AppendLine("Build the model in a disciplined order: primary construction geometry, main solids/surfaces, connections, openings, then visible secondary details.");
+            sb.AppendLine();
+            sb.AppendLine("QUALITY RULES:");
+            sb.AppendLine("- Prefer clean curves, surfaces and Breps over piles of unrelated primitive boxes.");
+            sb.AppendLine("- Use consistent axes, levels, proportions and inferred dimensions from the plan.");
+            sb.AppendLine("- Make connected architectural parts actually meet.");
+            sb.AppendLine("- Use trim/split/join and BooleanUnion/BooleanDifference/BooleanIntersection where appropriate.");
+            sb.AppendLine("- Avoid duplicates, accidental overlaps, tiny sliver faces, floating pieces and unnecessary coplanar fragments.");
+            sb.AppendLine("- Preserve unrelated existing geometry.");
+            sb.AppendLine("- Do not stop at rough massing unless the user explicitly requested only massing.");
+            sb.AppendLine("- Add the visible architectural depth and secondary elements that materially define the reference.");
+            sb.AppendLine();
+            sb.AppendLine("MODELLING PLAN:");
+            sb.AppendLine(plan);
+
+            if (attachments.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("REFERENCE IMAGE FILES:");
+                foreach (string image in attachments)
+                    sb.AppendLine("- " + image);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("ORIGINAL USER REQUEST:");
+            sb.AppendLine(userMessage);
+            sb.AppendLine();
+            sb.AppendLine("When this pass is complete, give a short factual summary of what you actually created.");
+
+            return sb.ToString();
+        }
+
+        private string BuildProInspectPrompt(
+            string userMessage,
+            List<string> attachments,
+            string plan,
+            string buildResult)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("You are the GEOMETRY QA INSPECTOR for Rhino AI Studio.");
+            sb.AppendLine("This is PASS 3 of 4: INSPECT ONLY.");
+            sb.AppendLine();
+            sb.AppendLine("Do NOT modify Rhino geometry in this pass.");
+            sb.AppendLine("Inspect the CURRENT ACTIVE RHINO DOCUMENT using Rhino MCP.");
+            sb.AppendLine("Use object inspection, geometry analysis, bounding boxes, intersections and viewport/view capture tools where useful.");
+            sb.AppendLine();
+            sb.AppendLine("Check specifically for:");
+            sb.AppendLine("- disconnected elements that should meet");
+            sb.AppendLine("- gaps at roof/wall/slab/frame/support connections");
+            sb.AppendLine("- unintended overlaps or collisions");
+            sb.AppendLine("- duplicate objects");
+            sb.AppendLine("- invalid Breps or failed solids");
+            sb.AppendLine("- naked/non-manifold edges where closed solids are expected");
+            sb.AppendLine("- floating or misplaced pieces");
+            sb.AppendLine("- inconsistent levels, axes or proportions");
+            sb.AppendLine("- missing major details visible in the reference");
+            sb.AppendLine("- crude geometry that can be replaced by cleaner joined/trimmed/booleaned geometry");
+            sb.AppendLine();
+            sb.AppendLine("Compare the result against the original request and reference image(s).");
+            sb.AppendLine("Return a concise, prioritised FIX LIST with exact objects/areas/issues to repair.");
+            sb.AppendLine("If an item is already correct, do not invent a problem.");
+            sb.AppendLine();
+            sb.AppendLine("ORIGINAL PLAN:");
+            sb.AppendLine(plan);
+            sb.AppendLine();
+            sb.AppendLine("BUILD PASS REPORT:");
+            sb.AppendLine(buildResult);
+
+            if (attachments.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("REFERENCE IMAGE FILES:");
+                foreach (string image in attachments)
+                    sb.AppendLine("- " + image);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("ORIGINAL USER REQUEST:");
+            sb.AppendLine(userMessage);
+
+            return sb.ToString();
+        }
+
+        private string BuildProRepairPrompt(
+            string userMessage,
+            List<string> attachments,
+            string plan,
+            string qaReport)
+        {
+            var sb = new StringBuilder();
+
+            sb.AppendLine("You are the SENIOR RHINO REPAIR MODELLER for Rhino AI Studio.");
+            sb.AppendLine("This is PASS 4 of 4: REPAIR AND REFINE.");
+            sb.AppendLine();
+            sb.AppendLine("USE RHINO MCP TOOLS DIRECTLY in the CURRENT ACTIVE RHINO DOCUMENT.");
+            sb.AppendLine("Fix the QA issues below. Do not just explain them.");
+            sb.AppendLine();
+            sb.AppendLine("REPAIR PRIORITY:");
+            sb.AppendLine("1. invalid or broken geometry");
+            sb.AppendLine("2. disconnected architectural connections");
+            sb.AppendLine("3. wrong overlaps/collisions and bad booleans");
+            sb.AppendLine("4. major proportion/alignment errors");
+            sb.AppendLine("5. missing important architectural details");
+            sb.AppendLine("6. cleanup of duplicates, slivers and unnecessary primitive fragments");
+            sb.AppendLine();
+            sb.AppendLine("After repairs, inspect the corrected areas again before finishing.");
+            sb.AppendLine("Do not delete correct geometry just to rebuild it differently.");
+            sb.AppendLine("Keep the result clean, editable and as faithful to the request/reference as possible.");
+            sb.AppendLine();
+            sb.AppendLine("QA FIX LIST:");
+            sb.AppendLine(qaReport);
+            sb.AppendLine();
+            sb.AppendLine("ORIGINAL PLAN:");
+            sb.AppendLine(plan);
+
+            if (attachments.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("REFERENCE IMAGE FILES:");
+                foreach (string image in attachments)
+                    sb.AppendLine("- " + image);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("ORIGINAL USER REQUEST:");
+            sb.AppendLine(userMessage);
+            sb.AppendLine();
+            sb.AppendLine("Finish with a short summary of the final model and the repairs you made.");
+
+            return sb.ToString();
+        }
+
+        private string RunCopilotPro(string userMessage, List<string> attachments)
         {
             string copilot = FindExecutable("copilot");
 
             if (string.IsNullOrWhiteSpace(copilot))
                 throw new Exception("GitHub Copilot CLI not found.");
 
-            string prompt = BuildPrompt(userMessage, attachments);
+            SetWorkingStage("Pass 1/4 · Analysing...");
+            string plan = ExecuteCopilot(
+                copilot,
+                BuildProAnalysisPrompt(userMessage, attachments),
+                attachments
+            );
 
+            if (string.IsNullOrWhiteSpace(plan))
+                throw new Exception("Pro Modeling analysis pass returned no plan.");
+
+            SetWorkingStage("Pass 2/4 · Building...");
+            string buildResult = ExecuteCopilot(
+                copilot,
+                BuildProBuildPrompt(userMessage, attachments, plan),
+                attachments
+            );
+
+            SetWorkingStage("Pass 3/4 · Inspecting...");
+            string qaReport = ExecuteCopilot(
+                copilot,
+                BuildProInspectPrompt(
+                    userMessage,
+                    attachments,
+                    plan,
+                    buildResult
+                ),
+                attachments
+            );
+
+            SetWorkingStage("Pass 4/4 · Repairing...");
+            string finalResult = ExecuteCopilot(
+                copilot,
+                BuildProRepairPrompt(
+                    userMessage,
+                    attachments,
+                    plan,
+                    qaReport
+                ),
+                attachments
+            );
+
+            SetWorkingStage("Finishing...");
+
+            if (string.IsNullOrWhiteSpace(finalResult))
+                finalResult = "Pro Modeling completed: analysed, built, inspected and repaired the Rhino model.";
+
+            return finalResult;
+        }
+
+        private string ExecuteCopilot(
+            string copilot,
+            string prompt,
+            List<string> attachments)
+        {
             var args = new List<string>
             {
                 "--session-id", Guid.NewGuid().ToString(),
@@ -629,6 +898,20 @@ namespace RhinoAIStudioDock
                 );
 
             return (result.output ?? "").Trim();
+        }
+
+        private string RunCopilot(string userMessage, List<string> attachments)
+        {
+            string copilot = FindExecutable("copilot");
+
+            if (string.IsNullOrWhiteSpace(copilot))
+                throw new Exception("GitHub Copilot CLI not found.");
+
+            return ExecuteCopilot(
+                copilot,
+                BuildPrompt(userMessage, attachments),
+                attachments
+            );
         }
 
         private string RunCodex(string userMessage, List<string> attachments)
@@ -1190,7 +1473,11 @@ window.addEventListener('load',function(){
                 .Replace("__SEND_DISABLED__", (_busy || _processingAttachments) ? "disabled" : "")
                 .Replace(
                     "__SEND_TEXT__",
-                    _processingAttachments ? "Processing image..." : (_busy ? "Working..." : "Send")
+                    _processingAttachments
+                        ? "Processing image..."
+                        : (_busy
+                            ? (string.IsNullOrWhiteSpace(_workingStage) ? "Working..." : _workingStage)
+                            : "Send")
                 );
 
             _web.LoadHtml(html);
