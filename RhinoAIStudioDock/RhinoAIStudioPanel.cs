@@ -35,6 +35,7 @@ namespace RhinoAIStudioDock
         private bool _mcpStarted;
         private bool _processingAttachments;
         private string _provider = "copilot";
+        private string _modelingMode = "pro";
 
         private const int MaxAttachments = 4;
         private const long MaxAttachmentBytes = 12L * 1024L * 1024L;
@@ -83,6 +84,15 @@ namespace RhinoAIStudioDock
 
                     if (value == "copilot" || value == "codex" || value == "claude")
                         _provider = value;
+
+                    Render();
+                }
+                else if (action == "mode")
+                {
+                    string value = query.TryGetValue("value", out var v) ? v : "pro";
+
+                    if (value == "fast" || value == "pro")
+                        _modelingMode = value;
 
                     Render();
                 }
@@ -527,6 +537,36 @@ namespace RhinoAIStudioDock
             sb.AppendLine("Do not tell the user to manually model something when Rhino MCP can do it.");
             sb.AppendLine("Preserve existing geometry unless the user asks to change it.");
             sb.AppendLine("If a reference image is attached, inspect it and use it as visual guidance.");
+            sb.AppendLine();
+
+            if (_modelingMode == "pro")
+            {
+                sb.AppendLine("PRO MODELING MODE IS ON.");
+                sb.AppendLine("Do not jump directly to a few primitive boxes and stop.");
+                sb.AppendLine("Think like an experienced Rhino architectural modeller.");
+                sb.AppendLine();
+                sb.AppendLine("WORKFLOW:");
+                sb.AppendLine("1. ANALYSE FIRST: understand the reference/request, identify the primary massing, structure, slabs, walls, roof/canopy, openings, frames, secondary details and repeated elements.");
+                sb.AppendLine("2. PLAN: establish a consistent origin, main axes, levels, proportions and key dimensions before creating detailed geometry.");
+                sb.AppendLine("3. PRIMARY GEOMETRY: create clean construction curves/surfaces/solids for the major components first. Prefer editable, intentional geometry over many disconnected primitives.");
+                sb.AppendLine("4. CONNECTIONS: make intersections intentional. Align faces and endpoints, trim/split/join correctly, and use BooleanUnion/BooleanDifference/BooleanIntersection when appropriate.");
+                sb.AppendLine("5. CLEANLINESS: avoid duplicate geometry, accidental overlaps, floating parts, tiny sliver surfaces, unnecessary coplanar faces and disconnected pieces.");
+                sb.AppendLine("6. DETAIL PASS: after the main form is correct, add openings, recesses, frames, parapets, roof edges, facade depth, supports and visible secondary details from the request/reference.");
+                sb.AppendLine("7. GEOMETRY QA: inspect the result using Rhino MCP before finishing. Check object locations, bounding boxes, intersections, valid Breps/solids, joins, naked/non-manifold edges where relevant, and whether related architectural parts actually meet.");
+                sb.AppendLine("8. FIX PASS: if the QA finds gaps, bad joins, invalid geometry, collisions, floating elements or poor connections, correct them before reporting completion.");
+                sb.AppendLine("9. VISUAL REVIEW: inspect the model/view again and make a final refinement pass so the overall silhouette, proportions and important details match the reference/request as closely as the available information allows.");
+                sb.AppendLine();
+                sb.AppendLine("Do not stop at rough massing unless the user explicitly asks only for massing.");
+                sb.AppendLine("Use fewer, cleaner, better-connected objects rather than many crude primitives.");
+                sb.AppendLine("If dimensions are not provided, infer sensible proportions from the reference and keep them internally consistent.");
+            }
+            else
+            {
+                sb.AppendLine("FAST MODELING MODE IS ON.");
+                sb.AppendLine("Prioritize speed and the main architectural form, but still keep geometry valid and connected.");
+            }
+
+            sb.AppendLine();
             sb.AppendLine("After finishing, briefly explain what you created or changed.");
 
             if (attachments.Count > 0)
@@ -1016,6 +1056,8 @@ button,select,textarea{font-family:inherit}
 .brand{font-size:14px;font-weight:700}
 .model{font-size:9px;color:#777;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .providerrow{display:flex;gap:7px;margin-top:11px}
+.moderow{display:flex;gap:7px;margin-top:7px;align-items:center}
+.modelabel{font-size:9px;color:#777;min-width:48px}
 select{flex:1;height:34px;border:1px solid #dddde3;border-radius:8px;background:#fff;padding:0 9px;font-size:10px;outline:none}
 .small{border:1px solid #e4e4e8;background:#f6f6f8;border-radius:8px;padding:7px 9px;font-size:9px;cursor:pointer}
 .status{margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -1069,6 +1111,14 @@ textarea{width:100%;height:72px;resize:none;border:0;outline:none;font-size:11px
       <button class='small' onclick='newChat()'>New chat</button>
     </div>
 
+    <div class='moderow'>
+      <span class='modelabel'>Modeling</span>
+      <select onchange='setMode(this.value)'>
+        <option value='fast' __FAST_SELECTED__>Fast</option>
+        <option value='pro' __PRO_SELECTED__>Pro Modeling</option>
+      </select>
+    </div>
+
     <div class='status'>
       <span class='pill __MCP_CLASS__'>__MCP_TEXT__</span>
       <span class='pill __PROVIDER_CLASS__'>__PROVIDER_TEXT__</span>
@@ -1095,6 +1145,7 @@ textarea{width:100%;height:72px;resize:none;border:0;outline:none;font-size:11px
 <script>
 function nav(url){window.location.href=url;}
 function setProvider(v){nav('rhinoai://provider?value='+encodeURIComponent(v));}
+function setMode(v){nav('rhinoai://mode?value='+encodeURIComponent(v));}
 function attachImage(){nav('rhinoai://attach');}
 function removeAttachment(i){nav('rhinoai://removeattachment?index='+i);}
 function clearAttachments(){nav('rhinoai://clearattachments');}
@@ -1128,6 +1179,8 @@ window.addEventListener('load',function(){
                 .Replace("__COPILOT_SELECTED__", _provider == "copilot" ? "selected" : "")
                 .Replace("__CODEX_SELECTED__", _provider == "codex" ? "selected" : "")
                 .Replace("__CLAUDE_SELECTED__", _provider == "claude" ? "selected" : "")
+                .Replace("__FAST_SELECTED__", _modelingMode == "fast" ? "selected" : "")
+                .Replace("__PRO_SELECTED__", _modelingMode == "pro" ? "selected" : "")
                 .Replace("__MCP_CLASS__", _mcpStarted ? "on" : "off")
                 .Replace("__MCP_TEXT__", _mcpStarted ? "Rhino MCP connected" : "Rhino MCP available")
                 .Replace("__PROVIDER_CLASS__", providerStateClass)
