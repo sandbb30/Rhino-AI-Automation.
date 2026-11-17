@@ -303,8 +303,8 @@ textarea{{width:100%;height:72px;resize:none;border:0;outline:none;font:11px Seg
     <div class='sub'>AI assistant for the active Rhino model</div>
     <div class='status'>
       <span class='pill {statusClass}'>{statusText}</span>
-      <button class='small' onclick="go('mcp')">Start MCP</button>
-      <button class='small' onclick="go('clear')">New chat</button>
+      <button class='small' onclick=""go('mcp')"">Start MCP</button>
+      <button class='small' onclick=""go('clear')"">New chat</button>
     </div>
   </div>
 
