@@ -1,0 +1,32 @@
+name: Build Rhino AI Studio Dock
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rhino-ai-studio-real-dock
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore RhinoAIStudioDock/RhinoAIStudioDock.csproj
+
+      - name: Build
+        run: dotnet build RhinoAIStudioDock/RhinoAIStudioDock.csproj -c Release --no-restore
+
+      - name: Upload RHP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RhinoAIStudioDock
+          path: RhinoAIStudioDock/bin/Release/net8.0/RhinoAIStudioDock.rhp
