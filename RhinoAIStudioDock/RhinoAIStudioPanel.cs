@@ -137,7 +137,7 @@ namespace RhinoAIStudioDock
         {
             try
             {
-                bool ok = RhinoApp.RunScript("MCPStart", false);
+                bool ok = RhinoApp.RunScript("_MCPStart _Enter", false);
                 _mcpStarted = ok;
 
                 if (addMessage)
