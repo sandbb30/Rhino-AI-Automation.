@@ -530,6 +530,53 @@ namespace RhinoAIStudioDock
             throw new Exception("Unknown AI provider.");
         }
 
+        private static void AppendArchitecturalIntelligenceRules(StringBuilder sb)
+        {
+            sb.AppendLine("ARCHITECTURAL INTELLIGENCE RULES:");
+            sb.AppendLine("- First classify visible/requested geometry as architectural objects and assemblies, not only as shapes.");
+            sb.AppendLine("- Think in terms of host elements, subcomponents, interfaces, profiles, thicknesses, openings, supports, joints and repeated systems.");
+            sb.AppendLine("- Do not replace a coherent architectural assembly with several unrelated primitive boxes just because that is faster.");
+            sb.AppendLine("- Do not BooleanUnion components that should remain constructionally distinct, such as glass versus frames, cladding versus structure, or doors versus walls.");
+            sb.AppendLine("- When one manufactured/constructed component should be continuous, model it as a coherent joined Brep/profile/surface assembly rather than disconnected fragments.");
+            sb.AppendLine("- Use one master profile/guide/grid for repeated members whenever possible so spacing, thickness and alignment remain consistent.");
+            sb.AppendLine("- Use realistic construction hierarchy and connections, but do not claim structural/code compliance from an image alone.");
+            sb.AppendLine("- If exact dimensions are unknown, use ratios and clearly inferred dimensions. If one real dimension is provided, use it as the scale reference.");
+            sb.AppendLine();
+            sb.AppendLine("COMMON ASSEMBLY RECIPES:");
+            sb.AppendLine("WINDOW: create one coordinated wall opening; one continuous outer frame/reveal where appropriate; mullions/transoms from a consistent profile; glazing as separate coordinated panes; sill/head/jamb depth where visible. Do not model the outer frame as four unrelated bars unless the design genuinely requires separate pieces.");
+            sb.AppendLine("DOOR: create the host opening first; coordinated frame/jamb/head/threshold; leaf or leaves; glazing/panels/hardware zones when visible; correct swing/clearance only when supported by the request.");
+            sb.AppendLine("CURTAIN WALL: establish the overall boundary and grid first; generate mullions/transoms from shared profiles; generate glazing/panels from the grid; keep frame and infill distinct but coordinated.");
+            sb.AppendLine("WALL: create a continuous host wall body; cut openings from the host; add reveals, returns, finishes and joints as secondary geometry instead of building the wall from disconnected blocks around each opening.");
+            sb.AppendLine("SLAB/FLOOR: create a continuous slab boundary and thickness; cut voids/openings; coordinate edges, drops, upstands and supports.");
+            sb.AppendLine("ROOF/CANOPY: establish governing rails/sections/edge curves first; use Sweep/Loft/NetworkSrf/SubD where appropriate; then add thickness, fascia, supports, joints and drainage slope only when visible or requested.");
+            sb.AppendLine("COLUMN/BEAM/FRAME: establish centerlines/axes and section profiles first; keep alignment and bearing/contact intentional; join only when the real assembly is monolithic.");
+            sb.AppendLine("STAIR: model flight geometry, landings and primary support logic first; then treads/risers/stringers/railings; keep rise/run and landing relationships consistent.");
+            sb.AppendLine("RAILING/LOUVRE/SCREEN: create a governing path/grid and one clean member profile, then generate repeated members consistently; avoid hand-placing many slightly different primitives.");
+            sb.AppendLine("FACADE/PANEL SYSTEM: establish the base surface and panel grid first; derive panels, joints, mullions, fins or ribs from that shared system.");
+            sb.AppendLine("ORGANIC/BESPOKE FORM: establish clean guide curves, rails and sections first; choose Sweep1/Sweep2/Loft/NetworkSrf/SubD/BlendSrf based on topology and continuity; add thickness/details only after the main surface is correct.");
+            sb.AppendLine();
+            sb.AppendLine("RHINO TECHNIQUE RULES:");
+            sb.AppendLine("- Extrusion is appropriate for genuinely prismatic components and profile-based members, but it is not the default answer for complex forms.");
+            sb.AppendLine("- Prefer Sweep1/Sweep2 for profile-driven curved members, Loft for controlled section transitions, NetworkSrf for two-direction surface control, Revolve for rotational forms, and SubD for genuinely organic editable forms.");
+            sb.AppendLine("- Use BlendSrf/MatchSrf or equivalent continuity-aware methods where smooth transitions matter.");
+            sb.AppendLine("- Build clean construction curves first when they provide a better geometric foundation than direct primitive creation.");
+            sb.AppendLine();
+        }
+
+        private static void AppendArchitecturalQaRules(StringBuilder sb)
+        {
+            sb.AppendLine("ARCHITECTURAL QA:");
+            sb.AppendLine("- Verify each recognised architectural object reads as one coherent assembly with sensible subcomponents.");
+            sb.AppendLine("- Check that openings belong to their host element and are not merely gaps between unrelated solids.");
+            sb.AppendLine("- Check frame members share consistent section size, alignment and connection logic.");
+            sb.AppendLine("- Check glass/infill is properly seated within frames and not floating or intersecting them incorrectly.");
+            sb.AppendLine("- Check walls, slabs, roofs, frames and supports meet intentionally at their interfaces.");
+            sb.AppendLine("- Check repeated systems use consistent spacing, thickness and orientation.");
+            sb.AppendLine("- Replace crude disconnected primitives when a cleaner profile/sweep/loft/joined Brep or system-based solution is clearly more appropriate.");
+            sb.AppendLine("- Preserve separate components where constructionally distinct; coherence does not mean BooleanUnion everything.");
+            sb.AppendLine();
+        }
+
         private string BuildPrompt(string userMessage, List<string> attachments)
         {
             var sb = new StringBuilder();
@@ -554,23 +601,24 @@ namespace RhinoAIStudioDock
             if (_modelingMode == "pro")
             {
                 sb.AppendLine("PRO MODELING MODE IS ON.");
-                sb.AppendLine("Do not jump directly to a few primitive boxes and stop.");
-                sb.AppendLine("Think like an experienced Rhino architectural modeller.");
+                sb.AppendLine("Think like an experienced architect, facade modeller and Rhino specialist.");
+                sb.AppendLine("Do not jump directly to primitive geometry. Understand what each object IS before deciding how to model it.");
                 sb.AppendLine();
+                AppendArchitecturalIntelligenceRules(sb);
                 sb.AppendLine("WORKFLOW:");
-                sb.AppendLine("1. ANALYSE FIRST: understand the reference/request, identify the primary massing, structure, slabs, walls, roof/canopy, openings, frames, secondary details and repeated elements.");
-                sb.AppendLine("2. PLAN: establish a consistent origin, main axes, levels, proportions and key dimensions before creating detailed geometry.");
-                sb.AppendLine("3. PRIMARY GEOMETRY: create clean construction curves/surfaces/solids for the major components first. Prefer editable, intentional geometry over many disconnected primitives.");
-                sb.AppendLine("4. CONNECTIONS: make intersections intentional. Align faces and endpoints, trim/split/join correctly, and use BooleanUnion/BooleanDifference/BooleanIntersection when appropriate.");
-                sb.AppendLine("5. CLEANLINESS: avoid duplicate geometry, accidental overlaps, floating parts, tiny sliver surfaces, unnecessary coplanar faces and disconnected pieces.");
-                sb.AppendLine("6. DETAIL PASS: after the main form is correct, add openings, recesses, frames, parapets, roof edges, facade depth, supports and visible secondary details from the request/reference.");
-                sb.AppendLine("7. GEOMETRY QA: inspect the result using Rhino MCP before finishing. Check object locations, bounding boxes, intersections, valid Breps/solids, joins, naked/non-manifold edges where relevant, and whether related architectural parts actually meet.");
-                sb.AppendLine("8. FIX PASS: if the QA finds gaps, bad joins, invalid geometry, collisions, floating elements or poor connections, correct them before reporting completion.");
-                sb.AppendLine("9. VISUAL REVIEW: inspect the model/view again and make a final refinement pass so the overall silhouette, proportions and important details match the reference/request as closely as the available information allows.");
+                sb.AppendLine("1. IDENTIFY: classify the architectural objects/assemblies and their hierarchy.");
+                sb.AppendLine("2. PLAN: establish origin, axes, levels, scale/proportions, key dimensions and construction relationships.");
+                sb.AppendLine("3. PRIMARY GEOMETRY: create governing curves/grids/host geometry and major surfaces/solids first.");
+                sb.AppendLine("4. ASSEMBLIES: build each architectural object using the appropriate recipe and coherent subcomponents.");
+                sb.AppendLine("5. CONNECTIONS: trim/split/join/boolean only where appropriate so interfaces are intentional.");
+                sb.AppendLine("6. DETAIL: add openings, frames, reveals, joints, edges, supports, parapets and visible secondary elements.");
+                sb.AppendLine("7. QA: inspect geometry and architectural assembly logic.");
+                sb.AppendLine("8. FIX: repair disconnected, crude, invalid or semantically incorrect geometry.");
+                sb.AppendLine("9. VISUAL REVIEW: compare silhouette, proportions and important details with the reference/request.");
                 sb.AppendLine();
+                AppendArchitecturalQaRules(sb);
                 sb.AppendLine("Do not stop at rough massing unless the user explicitly asks only for massing.");
-                sb.AppendLine("Use fewer, cleaner, better-connected objects rather than many crude primitives.");
-                sb.AppendLine("If dimensions are not provided, infer sensible proportions from the reference and keep them internally consistent.");
+                sb.AppendLine("Use fewer, cleaner, better-related objects rather than many crude primitives.");
             }
             else
             {
@@ -618,27 +666,32 @@ namespace RhinoAIStudioDock
         {
             var sb = new StringBuilder();
 
-            sb.AppendLine("You are the ANALYSIS PLANNER for Rhino AI Studio.");
-            sb.AppendLine("This is PASS 1 of 4: ANALYSE ONLY.");
+            sb.AppendLine("You are the ARCHITECTURAL ANALYSIS PLANNER for Rhino AI Studio.");
+            sb.AppendLine("This is PASS 1 of 4: ANALYSE AND SPECIFY ONLY.");
             sb.AppendLine();
             sb.AppendLine("Do NOT create, delete, move, transform, trim, join or modify Rhino geometry in this pass.");
-            sb.AppendLine("Your only job is to produce a precise modelling plan for the next pass.");
+            sb.AppendLine("Your job is to convert the request/reference into a precise architectural 3D specification and modelling plan.");
             sb.AppendLine();
-            sb.AppendLine("Analyse the user's request and any attached reference image(s).");
-            sb.AppendLine("If useful, you may inspect the CURRENT Rhino document using read-only Rhino MCP inspection tools, but do not modify it.");
+            AppendArchitecturalIntelligenceRules(sb);
+            sb.AppendLine("Analyse the user's request and every attached reference image carefully.");
+            sb.AppendLine("If useful, inspect the CURRENT Rhino document using read-only Rhino MCP inspection tools, but do not modify it.");
             sb.AppendLine();
-            sb.AppendLine("Return a structured plan containing:");
-            sb.AppendLine("- overall form and architectural intent");
-            sb.AppendLine("- inferred coordinate system/origin and principal axes");
-            sb.AppendLine("- key levels, proportions and dimensions, clearly marking inferred values");
-            sb.AppendLine("- component hierarchy: massing, slabs, walls, columns/supports, roof/canopy, openings, frames, facade elements and secondary details");
-            sb.AppendLine("- recommended Rhino construction method for each component");
-            sb.AppendLine("- where components must physically meet, intersect, trim, join or boolean");
-            sb.AppendLine("- repeated elements/patterns that should be generated consistently");
-            sb.AppendLine("- likely geometry risks: gaps, overlaps, slivers, floating pieces, invalid solids or poor joins");
-            sb.AppendLine("- an ordered modelling sequence");
+            sb.AppendLine("Return a structured specification containing:");
+            sb.AppendLine("- OBJECT CLASSIFICATION: identify each major element as window, wall, door, slab, roof, canopy, curtain wall, frame, stair, railing, facade panel, bespoke form, etc.");
+            sb.AppendLine("- ASSEMBLY HIERARCHY: for each object, list its host, subcomponents and what must remain separate versus continuous.");
+            sb.AppendLine("- FORM/INTENT: overall silhouette, curvature, symmetry, repetition and architectural character.");
+            sb.AppendLine("- SCALE: inferred coordinate system/origin, principal axes, levels and one consistent scale logic.");
+            sb.AppendLine("- DIMENSIONS: key dimensions and ratios; mark all values that are inferred from images.");
+            sb.AppendLine("- COMPONENT DETAILS: thickness hierarchy, frame/reveal/joint depth, openings, supports and visible secondary pieces.");
+            sb.AppendLine("- MODELLING METHOD: choose the Rhino technique for each component and explain why it suits the topology.");
+            sb.AppendLine("- CONNECTIONS: specify where components meet, seat, trim, join, overlap intentionally, or remain separate.");
+            sb.AppendLine("- REPETITION: identify master profiles/grids/arrays instead of individually improvised repeated pieces.");
+            sb.AppendLine("- RISKS: likely gaps, overlaps, slivers, floating pieces, invalid solids, weak joins or semantic assembly mistakes.");
+            sb.AppendLine("- BUILD ORDER: ordered sequence from construction geometry to main assemblies to details.");
             sb.AppendLine();
-            sb.AppendLine("Be concrete and implementation-focused. Do not give generic design advice.");
+            sb.AppendLine("Important: do not merely describe visible rectangles. Infer the likely architectural assembly behind them.");
+            sb.AppendLine("Example: a four-sided window frame should normally be planned as one coordinated frame assembly around glazing, not as four unrelated rectangles.");
+            sb.AppendLine("Be concrete and implementation-focused.");
 
             if (attachments.Count > 0)
             {
@@ -662,26 +715,30 @@ namespace RhinoAIStudioDock
         {
             var sb = new StringBuilder();
 
-            sb.AppendLine("You are the BUILD MODELLER for Rhino AI Studio.");
+            sb.AppendLine("You are the SENIOR ARCHITECTURAL RHINO MODELLER for Rhino AI Studio.");
             sb.AppendLine("This is PASS 2 of 4: BUILD.");
             sb.AppendLine();
             sb.AppendLine("USE RHINO MCP TOOLS DIRECTLY and work in the CURRENT ACTIVE RHINO DOCUMENT.");
             sb.AppendLine("Do not launch another Rhino instance.");
             sb.AppendLine();
-            sb.AppendLine("Execute the modelling plan below. Do not merely describe what should be modelled.");
-            sb.AppendLine("Build the model in a disciplined order: primary construction geometry, main solids/surfaces, connections, openings, then visible secondary details.");
+            AppendArchitecturalIntelligenceRules(sb);
+            sb.AppendLine("Execute the modelling specification below. Do not merely describe what should be modelled.");
+            sb.AppendLine("Build in this order: governing axes/grids/curves -> host/main geometry -> coherent assemblies -> connections/openings -> visible secondary detail.");
             sb.AppendLine();
-            sb.AppendLine("QUALITY RULES:");
-            sb.AppendLine("- Prefer clean curves, surfaces and Breps over piles of unrelated primitive boxes.");
+            sb.AppendLine("BUILD QUALITY RULES:");
+            sb.AppendLine("- Treat the plan's object classification as authoritative unless Rhino inspection proves it impossible.");
+            sb.AppendLine("- For each architectural object, create a coherent assembly rather than a pile of unrelated visual approximations.");
+            sb.AppendLine("- Build one clean master profile or system and reuse it for repeated members.");
             sb.AppendLine("- Use consistent axes, levels, proportions and inferred dimensions from the plan.");
             sb.AppendLine("- Make connected architectural parts actually meet.");
-            sb.AppendLine("- Use trim/split/join and BooleanUnion/BooleanDifference/BooleanIntersection where appropriate.");
+            sb.AppendLine("- Use trim/split/join and Boolean operations only when they reflect the intended assembly.");
+            sb.AppendLine("- Keep glass, cladding, structure and other materially distinct components separate when appropriate.");
             sb.AppendLine("- Avoid duplicates, accidental overlaps, tiny sliver faces, floating pieces and unnecessary coplanar fragments.");
             sb.AppendLine("- Preserve unrelated existing geometry.");
             sb.AppendLine("- Do not stop at rough massing unless the user explicitly requested only massing.");
             sb.AppendLine("- Add the visible architectural depth and secondary elements that materially define the reference.");
             sb.AppendLine();
-            sb.AppendLine("MODELLING PLAN:");
+            sb.AppendLine("MODELLING SPECIFICATION:");
             sb.AppendLine(plan);
 
             if (attachments.Count > 0)
@@ -709,14 +766,19 @@ namespace RhinoAIStudioDock
         {
             var sb = new StringBuilder();
 
-            sb.AppendLine("You are the GEOMETRY QA INSPECTOR for Rhino AI Studio.");
+            sb.AppendLine("You are the ARCHITECTURAL + GEOMETRY QA INSPECTOR for Rhino AI Studio.");
             sb.AppendLine("This is PASS 3 of 4: INSPECT ONLY.");
             sb.AppendLine();
             sb.AppendLine("Do NOT modify Rhino geometry in this pass.");
             sb.AppendLine("Inspect the CURRENT ACTIVE RHINO DOCUMENT using Rhino MCP.");
             sb.AppendLine("Use object inspection, geometry analysis, bounding boxes, intersections and viewport/view capture tools where useful.");
             sb.AppendLine();
-            sb.AppendLine("Check specifically for:");
+            AppendArchitecturalQaRules(sb);
+            sb.AppendLine("CHECK SPECIFICALLY FOR:");
+            sb.AppendLine("- objects that visually resemble the reference but are architecturally assembled incorrectly");
+            sb.AppendLine("- window/door/curtain-wall frames built as unrelated bars instead of coordinated assemblies");
+            sb.AppendLine("- host elements built as disconnected blocks around openings instead of continuous hosts with openings");
+            sb.AppendLine("- repeated components with inconsistent section, spacing or alignment");
             sb.AppendLine("- disconnected elements that should meet");
             sb.AppendLine("- gaps at roof/wall/slab/frame/support connections");
             sb.AppendLine("- unintended overlaps or collisions");
@@ -726,13 +788,13 @@ namespace RhinoAIStudioDock
             sb.AppendLine("- floating or misplaced pieces");
             sb.AppendLine("- inconsistent levels, axes or proportions");
             sb.AppendLine("- missing major details visible in the reference");
-            sb.AppendLine("- crude geometry that can be replaced by cleaner joined/trimmed/booleaned geometry");
+            sb.AppendLine("- crude geometry that should be replaced by cleaner profile/sweep/loft/joined/system-based geometry");
             sb.AppendLine();
             sb.AppendLine("Compare the result against the original request and reference image(s).");
             sb.AppendLine("Return a concise, prioritised FIX LIST with exact objects/areas/issues to repair.");
             sb.AppendLine("If an item is already correct, do not invent a problem.");
             sb.AppendLine();
-            sb.AppendLine("ORIGINAL PLAN:");
+            sb.AppendLine("ORIGINAL SPECIFICATION:");
             sb.AppendLine(plan);
             sb.AppendLine();
             sb.AppendLine("BUILD PASS REPORT:");
@@ -761,20 +823,24 @@ namespace RhinoAIStudioDock
         {
             var sb = new StringBuilder();
 
-            sb.AppendLine("You are the SENIOR RHINO REPAIR MODELLER for Rhino AI Studio.");
+            sb.AppendLine("You are the SENIOR ARCHITECTURAL RHINO REPAIR MODELLER for Rhino AI Studio.");
             sb.AppendLine("This is PASS 4 of 4: REPAIR AND REFINE.");
             sb.AppendLine();
             sb.AppendLine("USE RHINO MCP TOOLS DIRECTLY in the CURRENT ACTIVE RHINO DOCUMENT.");
             sb.AppendLine("Fix the QA issues below. Do not just explain them.");
             sb.AppendLine();
+            AppendArchitecturalIntelligenceRules(sb);
+            AppendArchitecturalQaRules(sb);
             sb.AppendLine("REPAIR PRIORITY:");
             sb.AppendLine("1. invalid or broken geometry");
-            sb.AppendLine("2. disconnected architectural connections");
-            sb.AppendLine("3. wrong overlaps/collisions and bad booleans");
-            sb.AppendLine("4. major proportion/alignment errors");
-            sb.AppendLine("5. missing important architectural details");
-            sb.AppendLine("6. cleanup of duplicates, slivers and unnecessary primitive fragments");
+            sb.AppendLine("2. architecturally incorrect assembly logic");
+            sb.AppendLine("3. disconnected architectural connections");
+            sb.AppendLine("4. wrong overlaps/collisions and bad booleans");
+            sb.AppendLine("5. major proportion/alignment errors");
+            sb.AppendLine("6. missing important architectural details");
+            sb.AppendLine("7. cleanup of duplicates, slivers and unnecessary primitive fragments");
             sb.AppendLine();
+            sb.AppendLine("Where a component was modelled as crude disconnected primitives, rebuild only that component using the correct architectural recipe and preserve correct surrounding geometry.");
             sb.AppendLine("After repairs, inspect the corrected areas again before finishing.");
             sb.AppendLine("Do not delete correct geometry just to rebuild it differently.");
             sb.AppendLine("Keep the result clean, editable and as faithful to the request/reference as possible.");
@@ -782,7 +848,7 @@ namespace RhinoAIStudioDock
             sb.AppendLine("QA FIX LIST:");
             sb.AppendLine(qaReport);
             sb.AppendLine();
-            sb.AppendLine("ORIGINAL PLAN:");
+            sb.AppendLine("ORIGINAL SPECIFICATION:");
             sb.AppendLine(plan);
 
             if (attachments.Count > 0)
